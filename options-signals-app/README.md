@@ -39,7 +39,30 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
-**Note**: The app works with or without `yahoo-finance2` installed. If the package is not available, it automatically falls back to mock data with realistic price ranges.
+**Note**: The app works with or without `yahoo-finance2` installed. If the package is not available, it automatically falls back to mock data with realistic price movements (±0.25% per update).
+
+## Real-Time Pricing Features
+
+- **30-second cache duration** - Prices update every 30 seconds for near real-time data
+- **Request deduplication** - Prevents duplicate simultaneous API calls for the same ticker
+- **Concurrency control** - Batches requests (5 at a time) to avoid overwhelming the API
+- **Retry logic with exponential backoff** - Automatically retries failed requests
+- **Realistic mock data** - When Yahoo Finance isn't available, mock prices simulate realistic movements
+- **Timeout protection** - 10-second request timeout to prevent hanging requests
+
+## Force Refresh Data
+
+To bypass the cache and get fresh data from Yahoo Finance, add the `refresh=true` query parameter:
+
+```bash
+# Force refresh signals
+curl "http://localhost:3000/api/signals?refresh=true"
+
+# Force refresh trades
+curl "http://localhost:3000/api/trades?refresh=true"
+```
+
+Programmatically, use the `refreshQuote()` method in `src/lib/market-data.ts`.
 
 Pages:
 

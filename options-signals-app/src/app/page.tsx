@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const now = new Date();
-  const signals = await generateSignals(now);
+  const signals = await generateSignals(now, false);
   const regime = generateRegime(now);
 
   const categoryCounts = {

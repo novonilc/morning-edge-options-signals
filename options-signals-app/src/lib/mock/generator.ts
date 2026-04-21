@@ -26,11 +26,23 @@ const TICKERS = [
   "COIN",
 ];
 
-async function getUniverse(): Promise<Array<MarketData & { ivRank: number }>> {
+async function getUniverse(forceRefresh = false): Promise<Array<MarketData & { ivRank: number }>> {
   try {
     // Dynamic import to handle missing yahoo-finance2
     const { yahooFinanceService } = await import("@/lib/market-data");
-    const marketData = await yahooFinanceService.getQuotes(TICKERS);
+    
+    let marketData: MarketData[];
+    
+    if (forceRefresh && TICKERS.length > 0) {
+      // Force refresh each ticker individually
+      marketData = await Promise.all(
+        TICKERS.map((ticker) => yahooFinanceService.refreshQuote(ticker))
+      );
+    } else {
+      // Use normal cached request
+      marketData = await yahooFinanceService.getQuotes(TICKERS);
+    }
+    
     // For IV rank, we'll use a mock calculation since Yahoo Finance doesn't provide it directly
     // In a real implementation, you might use a different data source for IV rank
     return marketData.map((data, index) => ({
@@ -302,7 +314,7 @@ const STRATEGY_CATEGORY: Record<Strategy, Category> = {
   short_strangle: "income",
 };
 
-export async function generateSignals(date: Date = new Date()): Promise<Signal[]> {
+export async function generateSignals(date: Date = new Date(), forceRefresh = false): Promise<Signal[]> {
   const rnd = seededRandom(dateSeed(date));
   const numSignals = 5 + Math.floor(rnd() * 3);
 
@@ -317,7 +329,7 @@ export async function generateSignals(date: Date = new Date()): Promise<Signal[]
     "short_strangle",
   ];
 
-  const universe = await getUniverse();
+  const universe = await getUniverse(forceRefresh);
   const picks: Signal[] = [];
   const usedTickers = new Set<string>();
 

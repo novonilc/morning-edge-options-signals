@@ -4,7 +4,7 @@ import { STRATEGY_LABEL, formatUsd } from "@/lib/format";
 export const dynamic = "force-dynamic";
 
 export default async function TradesPage() {
-  const signals = await generateSignals(new Date());
+  const signals = await generateSignals(new Date(), false);
   const trades = generateTrades(signals);
 
   const open = trades.filter((t) => t.exitAt === null);
