@@ -26,20 +26,38 @@ See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed deployment guides to multiple pl
 - **Next.js 14** (App Router, TypeScript)
 - **Tailwind CSS** (custom editorial-terminal design tokens)
 - **Yahoo Finance API** (yahoo-finance2 package for real market data)
+- **Resend** (optional: email delivery)
 - Deterministic **mock generator** (seeded by date → same signals rendered server-side + client-side)
-- Designed to slot into **Supabase + Resend + Vercel cron** for production
+- Designed to slot into **Supabase + Vercel Cron** for production
 
 ## Quick start
 
 ```bash
 cd options-signals-app
-npm install  # Installs yahoo-finance2 for real market data (optional)
+npm install  # Installs yahoo-finance2 and resend for real market data + email
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
-**Note**: The app works with or without `yahoo-finance2` installed. If the package is not available, it automatically falls back to mock data with realistic price movements (±0.25% per update).
+**Note**: The app works with or without `yahoo-finance2` and `resend` installed. If packages are not available, it automatically falls back to mock data and disables email features.
+
+### Quick Email Setup
+
+```bash
+# Copy environment template
+cp .env.local.example .env.local
+
+# Edit .env.local with your Resend API key and email
+nano .env.local
+
+# Run setup script (optional - handles dependencies)
+bash scripts/setup-email.sh
+
+# Test email delivery
+npm run dev
+curl -X POST http://localhost:3000/api/admin/test-email
+```
 
 ## Real-Time Pricing Features
 
@@ -80,23 +98,107 @@ API routes (return JSON, currently sourced from mocks):
 
 Run `npm run test` to verify the market data integration works (with or without yahoo-finance2 installed).
 
+## Email Notifications
+
+Send signals via email every morning between 5AM - 6:30AM PST.
+
+### Setup
+
+1. **Install Resend** (optional but recommended):
+```bash
+npm install resend
+```
+
+2. **Set environment variables** in `.env.local`:
+```bash
+# Resend API key (get from https://resend.com)
+RESEND_API_KEY=your_resend_api_key
+
+# Email configuration
+EMAIL_FROM=noreply@yourdomain.com
+EMAIL_TO=your.email@example.com
+EMAIL_REPLY_TO=support@yourdomain.com
+
+# Security (optional)
+CRON_SECRET=your_secret_cron_token
+ADMIN_TOKEN=your_admin_token
+
+# App URL for email links (optional)
+APP_URL=https://yourdomain.com
+```
+
+3. **Configure cron trigger** (choose one):
+
+**Option A: Vercel Cron (if deployed on Vercel)**
+
+Add to `vercel.json`:
+```json
+{
+  "crons": [
+    {
+      "path": "/api/cron/send-signals",
+      "schedule": "0 5-6 * * MON-FRI"
+    }
+  ]
+}
+```
+
+**Option B: External Cron Service**
+
+Use [cron-job.org](https://cron-job.org), [EasyCron](https://www.easycron.com), or similar:
+```
+URL: https://yourdomain.com/api/cron/send-signals
+Method: POST
+Headers:
+  Authorization: Bearer YOUR_CRON_SECRET
+  Content-Type: application/json
+Schedule: Every day at 5:00 AM PST
+```
+
+**Option C: Manual Testing**
+
+```bash
+# Test email delivery (requires ADMIN_TOKEN if configured)
+curl -X POST http://localhost:3000/api/admin/test-email \
+  -H "Authorization: Bearer YOUR_ADMIN_TOKEN"
+
+# Trigger email send with force parameter (bypasses time window check)
+curl -X POST "http://localhost:3000/api/cron/send-signals?force=true" \
+  -H "Authorization: Bearer YOUR_CRON_SECRET"
+
+# Check time window and configuration status
+curl http://localhost:3000/api/cron/send-signals
+```
+
+### Features
+
+- Automatically checks time window (5AM - 6:30AM PST) before sending
+- Includes top 10 signals with market regime context
+- Beautiful HTML email template with conviction scores
+- Graceful fallback if email service not configured
+- Force refresh of market data for latest prices
+
 ## Project layout
 
 ```
 src/
 ├── app/
 │   ├── api/
-│   │   ├── signals/route.ts     GET today's signals + regime
-│   │   ├── trades/route.ts      GET paper trades
-│   │   └── backtests/route.ts   GET strategy stats
-│   ├── backtests/page.tsx       Strategy performance table
-│   ├── trades/page.tsx          Paper trade ledger
-│   ├── page.tsx                 Morning brief (home)
-│   ├── layout.tsx               Root layout + masthead nav
-│   └── globals.css              Fonts, design tokens, base styles
+│   │   ├── cron/
+│   │   │   └── send-signals/route.ts  Daily email cron endpoint
+│   │   ├── admin/
+│   │   │   └── test-email/route.ts    Test email endpoint
+│   │   ├── signals/route.ts           GET today's signals + regime
+│   │   ├── trades/route.ts            GET paper trades
+│   │   └── backtests/route.ts         GET strategy stats
+│   ├── backtests/page.tsx             Strategy performance table
+│   ├── trades/page.tsx                Paper trade ledger
+│   ├── page.tsx                       Morning brief (home)
+│   ├── layout.tsx                     Root layout + masthead nav
+│   └── globals.css                    Fonts, design tokens, base styles
 ├── components/
-│   ├── SignalCard.tsx           Expandable signal with legs + catalysts
-│   ├── RegimeStrip.tsx          SPX / VIX / skew / earnings row
+│   ├── SignalCard.tsx                 Expandable signal with legs + catalysts
+│   ├── RegimeStrip.tsx                SPX / VIX / skew / earnings row
 │   └── Dateline.tsx             Live market clock
 └── lib/
     ├── types.ts                 Signal, Trade, BacktestStat, MarketRegime
