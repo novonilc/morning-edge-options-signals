@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Geist:wght@300;400;500;600&family=JetBrains+Mono:wght@300;400;500&display=swap");
+
+:root {
+  --ink-50: #f7f7f4;
+  --ink-100: #ecebe4;
+  --ink-200: #d6d4c6;
+  --ink-400: #8a8779;
+  --ink-600: #5a5749;
+  --ink-800: #2a2823;
+  --ink-900: #181712;
+  --accent: #d4593a;
+  --accent-soft: #f4e4dc;
+  --bull: #2d6a4f;
+  --bear: #a3301d;
+  --neutral: #8a6d3b;
+}
+
+html,
+body {
+  background: var(--ink-50);
+  color: var(--ink-900);
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-display {
+  font-family: "Fraunces", ui-serif, Georgia, serif;
+  font-feature-settings: "ss01";
+}
+
+.font-mono {
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.rule {
+  border-top: 1px solid var(--ink-200);
+}
+
+.rule-thick {
+  border-top: 2px solid var(--ink-900);
+}
+
+.hairline {
+  border-top: 0.5px solid var(--ink-200);
+}
+
+.tabnum {
+  font-variant-numeric: tabular-nums;
+}
+
+button,
+a {
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease,
+    opacity 120ms ease;
+}
+
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+
+.blink {
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.card-hover:hover {
+  background: #fbfaf6;
+}
