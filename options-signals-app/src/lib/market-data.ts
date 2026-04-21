@@ -283,10 +283,12 @@ export class MockYahooFinanceService {
 // Try to use real Yahoo Finance, fall back to mock if not available
 let yahooFinanceService: YahooFinanceService | MockYahooFinanceService;
 
-try {
+// Check if yahoo-finance2 is available BEFORE trying to use it
+if (yahooFinance) {
+  console.log('Using Yahoo Finance service for real-time data');
   yahooFinanceService = YahooFinanceService.getInstance();
-} catch (error) {
-  console.warn('Yahoo Finance not available, using mock data:', error);
+} else {
+  console.log('Yahoo Finance not available, using mock data service with realistic price movements');
   yahooFinanceService = MockYahooFinanceService.getInstance();
 }
 
