@@ -1,9 +1,27 @@
-// Conditionally import yahoo-finance2
+/**
+ * Market data service with Yahoo Finance integration
+ * Falls back to realistic mock data if yahoo-finance2 is not available
+ */
+
 let yahooFinance: any = null;
-try {
-  yahooFinance = require('yahoo-finance2');
-} catch (error) {
-  console.warn('yahoo-finance2 not available, using mock data');
+
+/**
+ * Dynamically import yahoo-finance2
+ * This handles both ESM and CommonJS environments
+ */
+async function initializeYahooFinance() {
+  if (yahooFinance !== null) {
+    return yahooFinance;
+  }
+
+  try {
+    // Try ESM import first (works in Next.js)
+    yahooFinance = await import('yahoo-finance2');
+    return yahooFinance;
+  } catch (error) {
+    console.warn('yahoo-finance2 not available or failed to load, using mock data:', error);
+    return null;
+  }
 }
 
 export interface MarketData {
