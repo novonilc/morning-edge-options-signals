@@ -1,306 +1,115 @@
-/**
- * Market data service with Yahoo Finance integration
- * Falls back to realistic mock data if yahoo-finance2 is not available
- */
-
-let yahooFinance: any = null;
-
-/**
- * Dynamically import yahoo-finance2
- * This handles both ESM and CommonJS environments
- */
-async function initializeYahooFinance() {
-  if (yahooFinance !== null) {
-    return yahooFinance;
-  }
-
-  try {
-    // Try ESM import first (works in Next.js)
-    yahooFinance = await import('yahoo-finance2');
-    return yahooFinance;
-  } catch (error) {
-    console.warn('yahoo-finance2 not available or failed to load, using mock data:', error);
-    return null;
-  }
-}
-
 export interface MarketData {
   ticker: string;
   price: number;
-  ivRank?: number; // Yahoo Finance may not provide this directly
+  ivRank?: number;
 }
 
-export class YahooFinanceService {
-  private static instance: YahooFinanceService;
+// ─── Yahoo Finance HTTP Service ─────────────────────────────────────────────
+// Calls Yahoo Finance's public REST API directly via fetch.
+// No API key, no npm package, works from anywhere including Canada.
+// Uses the bulk /v7/finance/quote endpoint — one request for all tickers.
+
+export class YahooHttpService {
+  private static instance: YahooHttpService;
   private cache: Map<string, { data: MarketData; timestamp: number }> = new Map();
-  private pendingRequests: Map<string, Promise<MarketData>> = new Map();
-  private readonly CACHE_DURATION = 30 * 1000; // 30 seconds - much shorter for real-time updates
-  private readonly REQUEST_TIMEOUT = 10000; // 10 second timeout per request
-  private readonly MAX_RETRIES = 2;
+  private readonly CACHE_DURATION = 30 * 1000; // 30 seconds
 
   private constructor() {}
 
-  static getInstance(): YahooFinanceService {
-    if (!YahooFinanceService.instance) {
-      YahooFinanceService.instance = new YahooFinanceService();
+  static getInstance(): YahooHttpService {
+    if (!YahooHttpService.instance) {
+      YahooHttpService.instance = new YahooHttpService();
     }
-    return YahooFinanceService.instance;
+    return YahooHttpService.instance;
   }
 
   async getQuote(ticker: string): Promise<MarketData> {
-    // Check cache first
     const cached = this.cache.get(ticker);
     if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
       return cached.data;
     }
 
-    // Avoid duplicate simultaneous requests for same ticker
-    if (this.pendingRequests.has(ticker)) {
-      return this.pendingRequests.get(ticker)!;
-    }
-
-    if (!yahooFinance) {
-      throw new Error('Yahoo Finance not available');
-    }
-
-    const request = this.fetchQuoteWithRetry(ticker);
-    this.pendingRequests.set(ticker, request);
-
-    try {
-      const data = await request;
-      this.cache.set(ticker, { data, timestamp: Date.now() });
-      return data;
-    } finally {
-      this.pendingRequests.delete(ticker);
-    }
-  }
-
-  private async fetchQuoteWithRetry(
-    ticker: string,
-    retryCount = 0
-  ): Promise<MarketData> {
-    try {
-      const quote = await Promise.race([
-        yahooFinance.quote(ticker),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Request timeout')), this.REQUEST_TIMEOUT)
-        ),
-      ]);
-
-      if (!quote || !quote.regularMarketPrice) {
-        throw new Error(`No data available for ${ticker}`);
-      }
-
-      const data: MarketData = {
-        ticker,
-        price: quote.regularMarketPrice,
-      };
-
-      return data;
-    } catch (error) {
-      if (retryCount < this.MAX_RETRIES) {
-        // Exponential backoff: 100ms, 200ms
-        await new Promise((resolve) =>
-          setTimeout(resolve, 100 * Math.pow(2, retryCount))
-        );
-        return this.fetchQuoteWithRetry(ticker, retryCount + 1);
-      }
-      console.error(`Error fetching data for ${ticker}:`, error);
-      throw error;
-    }
-  }
-
-  async getQuotes(tickers: string[]): Promise<MarketData[]> {
-    // Batch requests with concurrency control to avoid overwhelming the API
-    const CONCURRENCY_LIMIT = 5;
-    const results: MarketData[] = [];
-
-    for (let i = 0; i < tickers.length; i += CONCURRENCY_LIMIT) {
-      const batch = tickers.slice(i, i + CONCURRENCY_LIMIT);
-      const batchResults = await Promise.allSettled(
-        batch.map((ticker) => this.getQuote(ticker))
-      );
-
-      batchResults.forEach((result) => {
-        if (result.status === 'fulfilled') {
-          results.push(result.value);
-        } else {
-          console.error('Failed to fetch quote:', result.reason);
-        }
-      });
-    }
-
-    return results;
-  }
-
-  /**
-   * Force refresh a quote, bypassing cache
-   */
-  async refreshQuote(ticker: string): Promise<MarketData> {
-    this.cache.delete(ticker);
-    this.pendingRequests.delete(ticker);
-    return this.getQuote(ticker);
-  }
-
-  /**
-   * Clear all cached data
-   */
-  clearCache(): void {
-    this.cache.clear();
-  }
-  async getOptionsChain(ticker: string, expirationDate?: Date) {
-    if (!yahooFinance) {
-      throw new Error('Yahoo Finance not available');
-    }
-
-    try {
-      const options = await yahooFinance.options(ticker, expirationDate);
-      return options;
-    } catch (error) {
-      console.error(`Error fetching options for ${ticker}:`, error);
-      throw error;
-    }
-  }
-}
-
-// Create a mock service for when yahoo-finance2 is not available
-export class MockYahooFinanceService {
-  private static instance: MockYahooFinanceService;
-  private cache: Map<string, { data: MarketData; timestamp: number }> = new Map();
-  private priceHistory: Map<string, number[]> = new Map(); // Track price history for realistic movements
-  private readonly CACHE_DURATION = 30 * 1000; // 30 seconds - match real service
-  private readonly BASE_PRICES: Record<string, number> = {
-    'NVDA': 131.0,
-    'SPY': 578.0,
-    'QQQ': 498.0,
-    'TSLA': 248.0,
-    'AAPL': 207.0,
-    'MSFT': 415.0,
-    'AMD': 128.0,
-    'META': 545.0,
-    'GOOGL': 183.0,
-    'AMZN': 205.0,
-    'IWM': 218.0,
-    'COIN': 232.0,
-  };
-
-  private constructor() {}
-
-  static getInstance(): MockYahooFinanceService {
-    if (!MockYahooFinanceService.instance) {
-      MockYahooFinanceService.instance = new MockYahooFinanceService();
-    }
-    return MockYahooFinanceService.instance;
-  }
-
-  /**
-   * Generate realistic price with small random movements (0.05% to 0.3% change)
-   */
-  private generateRealisticPrice(ticker: string): number {
-    const basePrice = this.BASE_PRICES[ticker] || 100 + Math.random() * 400;
-    
-    if (!this.priceHistory.has(ticker)) {
-      this.priceHistory.set(ticker, [basePrice]);
-    }
-
-    const history = this.priceHistory.get(ticker)!;
-    const lastPrice = history[history.length - 1];
-    
-    // Small random walk: ±0.05% to 0.3%
-    const changePercent = (Math.random() - 0.5) * 0.005; // ±0.25%
-    const newPrice = lastPrice * (1 + changePercent);
-    
-    // Keep only last 100 prices to avoid memory issues
-    if (history.length > 100) {
-      history.shift();
-    }
-    history.push(newPrice);
-    
-    return Math.round(newPrice * 100) / 100; // Round to 2 decimals
-  }
-
-  async getQuote(ticker: string): Promise<MarketData> {
-    // Check cache first
-    const cached = this.cache.get(ticker);
-    if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
-      return cached.data;
-    }
-
-    // Simulate API call delay (1-100ms)
-    await new Promise((resolve) =>
-      setTimeout(resolve, Math.random() * 100)
+    const res = await fetch(
+      `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`,
+      { headers: { 'User-Agent': 'Mozilla/5.0' } },
     );
 
-    const price = this.generateRealisticPrice(ticker);
+    if (!res.ok) throw new Error(`Yahoo HTTP error for ${ticker}: ${res.status}`);
 
-    const data: MarketData = {
-      ticker,
-      price,
-      ivRank: 20 + Math.floor(Math.random() * 60),
+    const json = await res.json() as {
+      chart: { result: { meta: { regularMarketPrice: number; previousClose: number } }[] };
     };
 
-    // Cache the result
-    this.cache.set(ticker, { data, timestamp: Date.now() });
+    const meta = json?.chart?.result?.[0]?.meta;
+    if (!meta) throw new Error(`No Yahoo data for ${ticker}`);
 
+    const price = meta.regularMarketPrice || meta.previousClose;
+    if (!price) throw new Error(`Zero price from Yahoo for ${ticker}`);
+
+    const data: MarketData = { ticker, price };
+    this.cache.set(ticker, { data, timestamp: Date.now() });
     return data;
   }
 
   async getQuotes(tickers: string[]): Promise<MarketData[]> {
-    // Batch requests with slight delays to simulate real API behavior
-    const CONCURRENCY_LIMIT = 5;
-    const results: MarketData[] = [];
-
-    for (let i = 0; i < tickers.length; i += CONCURRENCY_LIMIT) {
-      const batch = tickers.slice(i, i + CONCURRENCY_LIMIT);
-      const batchResults = await Promise.allSettled(
-        batch.map((ticker) => this.getQuote(ticker))
+    // Yahoo bulk endpoint — all tickers in a single request
+    const symbols = tickers.join(',');
+    try {
+      const res = await fetch(
+        `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${symbols}`,
+        { headers: { 'User-Agent': 'Mozilla/5.0' } },
       );
 
-      batchResults.forEach((result) => {
-        if (result.status === 'fulfilled') {
-          results.push(result.value);
-        }
-      });
-    }
+      if (!res.ok) throw new Error(`Yahoo bulk quote failed: ${res.status}`);
 
-    return results;
+      const json = await res.json() as {
+        quoteResponse: {
+          result: { symbol: string; regularMarketPrice: number; regularMarketPreviousClose: number }[];
+        };
+      };
+
+      const results = json?.quoteResponse?.result ?? [];
+      return results
+        .map((q) => {
+          const price = q.regularMarketPrice || q.regularMarketPreviousClose;
+          if (!price) return null;
+          const data: MarketData = { ticker: q.symbol, price };
+          this.cache.set(q.symbol, { data, timestamp: Date.now() });
+          return data;
+        })
+        .filter((d): d is MarketData => d !== null);
+    } catch {
+      // Bulk failed — fall back to per-ticker calls
+      const results = await Promise.allSettled(tickers.map((t) => this.getQuote(t)));
+      return results
+        .filter((r): r is PromiseFulfilledResult<MarketData> => r.status === 'fulfilled')
+        .map((r) => r.value);
+    }
   }
 
-  /**
-   * Force refresh a quote, bypassing cache
-   */
   async refreshQuote(ticker: string): Promise<MarketData> {
     this.cache.delete(ticker);
     return this.getQuote(ticker);
   }
 
-  /**
-   * Clear all cached data and price history
-   */
   clearCache(): void {
     this.cache.clear();
-    // Don't clear priceHistory - keep it for realistic movement
   }
 
-  async getOptionsChain(ticker: string, expirationDate?: Date) {
-    // Mock options data
-    return {
-      underlyingSymbol: ticker,
-      expirationDates: [
-        new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        new Date(Date.now() + 21 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      ],
-      strikes: [],
-      hasMiniOptions: false,
-      quote: { regularMarketPrice: 100 + Math.random() * 400 },
-    };
+  async getOptionsChain(ticker: string, _expirationDate?: Date) {
+    const res = await fetch(
+      `https://query2.finance.yahoo.com/v7/finance/options/${ticker}`,
+      { headers: { 'User-Agent': 'Mozilla/5.0' } },
+    );
+    if (!res.ok) throw new Error(`Yahoo options chain failed for ${ticker}: ${res.status}`);
+    return res.json();
   }
 }
 
 // ─── Finnhub Data Service ───────────────────────────────────────────────────
-// Free tier: 60 calls/min, real-time US quotes, no account restrictions.
-// Sign up at https://finnhub.io → Dashboard → API Keys
+// Free tier: 60 calls/min, real-time US quotes.
+// Set FINNHUB_API_KEY in .env.local to enable.
+// Falls back to previous close when market is closed (c === 0).
 
 export class FinnhubDataService {
   private static instance: FinnhubDataService;
@@ -327,26 +136,25 @@ export class FinnhubDataService {
       `${this.BASE_URL}/quote?symbol=${ticker}&token=${this.apiKey}`,
     );
 
-    if (!res.ok) {
-      throw new Error(`Finnhub error for ${ticker}: ${res.status}`);
-    }
+    if (!res.ok) throw new Error(`Finnhub error for ${ticker}: ${res.status}`);
 
-    // c = current price, pc = previous close
     const json = await res.json() as { c: number; pc: number };
-    if (!json.c) throw new Error(`No Finnhub data for ${ticker}`);
 
-    const data: MarketData = { ticker, price: json.c };
+    // c = current price (0 when market closed), pc = previous close
+    const price = json.c || json.pc;
+    if (!price) throw new Error(`No Finnhub price for ${ticker}`);
+
+    const data: MarketData = { ticker, price };
     this.cache.set(ticker, { data, timestamp: Date.now() });
     return data;
   }
 
   async getQuotes(tickers: string[]): Promise<MarketData[]> {
-    // Finnhub free tier: serial calls with small delay to stay under 60 req/min
     const results: MarketData[] = [];
     for (const ticker of tickers) {
       try {
         results.push(await this.getQuote(ticker));
-        await new Promise((r) => setTimeout(r, 100)); // ~10 req/sec
+        await new Promise((r) => setTimeout(r, 100)); // stay under 60 req/min
       } catch (err) {
         console.error(`Finnhub: failed to fetch ${ticker}:`, err);
       }
@@ -364,7 +172,6 @@ export class FinnhubDataService {
   }
 
   async getOptionsChain(ticker: string, _expirationDate?: Date) {
-    // Finnhub options chain (requires paid plan)
     const res = await fetch(
       `${this.BASE_URL}/stock/option-chain?symbol=${ticker}&token=${this.apiKey}`,
     );
@@ -373,23 +180,87 @@ export class FinnhubDataService {
   }
 }
 
-// ─── Service selection ──────────────────────────────────────────────────────
-// Priority: Finnhub (when key present) → Yahoo Finance → Mock
+// ─── Mock Service ───────────────────────────────────────────────────────────
+// Last-resort fallback when all live sources fail.
 
-const finnhubKey = process.env.FINNHUB_API_KEY;
+export class MockMarketDataService {
+  private static instance: MockMarketDataService;
+  private cache: Map<string, { data: MarketData; timestamp: number }> = new Map();
+  private priceHistory: Map<string, number[]> = new Map();
+  private readonly CACHE_DURATION = 30 * 1000;
+  private readonly BASE_PRICES: Record<string, number> = {
+    NVDA: 131.0, SPY: 578.0, QQQ: 498.0, TSLA: 248.0,
+    AAPL: 207.0, MSFT: 415.0, AMD: 128.0, META: 545.0,
+    GOOGL: 183.0, AMZN: 205.0, IWM: 218.0, COIN: 232.0,
+  };
 
-type AnyMarketService = FinnhubDataService | YahooFinanceService | MockYahooFinanceService;
-let yahooFinanceService: AnyMarketService;
+  private constructor() {}
 
-if (finnhubKey) {
-  console.log('Using Finnhub for real-time market data');
-  yahooFinanceService = FinnhubDataService.getInstance(finnhubKey);
-} else if (yahooFinance) {
-  console.log('Using Yahoo Finance for real-time data');
-  yahooFinanceService = YahooFinanceService.getInstance();
-} else {
-  console.log('No market data provider configured — using mock data');
-  yahooFinanceService = MockYahooFinanceService.getInstance();
+  static getInstance(): MockMarketDataService {
+    if (!MockMarketDataService.instance) {
+      MockMarketDataService.instance = new MockMarketDataService();
+    }
+    return MockMarketDataService.instance;
+  }
+
+  private nextPrice(ticker: string): number {
+    const base = this.BASE_PRICES[ticker] ?? 150;
+    if (!this.priceHistory.has(ticker)) this.priceHistory.set(ticker, [base]);
+    const history = this.priceHistory.get(ticker)!;
+    const last = history[history.length - 1];
+    const next = last * (1 + (Math.random() - 0.5) * 0.005);
+    if (history.length > 100) history.shift();
+    history.push(next);
+    return Math.round(next * 100) / 100;
+  }
+
+  async getQuote(ticker: string): Promise<MarketData> {
+    const cached = this.cache.get(ticker);
+    if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) return cached.data;
+    const data: MarketData = { ticker, price: this.nextPrice(ticker), ivRank: 20 + Math.floor(Math.random() * 60) };
+    this.cache.set(ticker, { data, timestamp: Date.now() });
+    return data;
+  }
+
+  async getQuotes(tickers: string[]): Promise<MarketData[]> {
+    return Promise.all(tickers.map((t) => this.getQuote(t)));
+  }
+
+  async refreshQuote(ticker: string): Promise<MarketData> {
+    this.cache.delete(ticker);
+    return this.getQuote(ticker);
+  }
+
+  clearCache(): void { this.cache.clear(); }
+
+  async getOptionsChain(ticker: string, _expirationDate?: Date) {
+    return {
+      underlyingSymbol: ticker,
+      expirationDates: [
+        new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0],
+        new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+      ],
+      strikes: [],
+    };
+  }
 }
 
-export { yahooFinanceService };
+// ─── Service selection ──────────────────────────────────────────────────────
+// Priority: Finnhub (if FINNHUB_API_KEY set) → Yahoo Finance HTTP → Mock
+//
+// Yahoo Finance HTTP requires no API key and works from Canada.
+// It is used automatically as the free real-time source.
+
+export type MarketDataService = FinnhubDataService | YahooHttpService | MockMarketDataService;
+
+function buildService(): MarketDataService {
+  const finnhubKey = process.env.FINNHUB_API_KEY;
+  if (finnhubKey) {
+    console.log('[market-data] Using Finnhub');
+    return FinnhubDataService.getInstance(finnhubKey);
+  }
+  console.log('[market-data] Using Yahoo Finance HTTP (no API key required)');
+  return YahooHttpService.getInstance();
+}
+
+export const yahooFinanceService: MarketDataService = buildService();
