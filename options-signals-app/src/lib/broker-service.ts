@@ -1,17 +1,19 @@
 /**
  * Broker connection and trade execution service
- * Supports multiple brokers: Alpaca, TD Ameritrade, Interactive Brokers, Tastytrade
+ * Uses Alpaca REST API directly via fetch — no extra SDK package required.
+ * Paper trading URL:  https://paper-api.alpaca.markets
+ * Live trading URL:   https://api.alpaca.markets
  */
 
-import type { Signal, Leg } from './types';
+import type { Signal } from './types';
 
 export interface BrokerConfig {
   provider: 'alpaca' | 'td_ameritrade' | 'interactive_brokers' | 'paper';
   apiKey: string;
   apiSecret: string;
-  paperTrading?: boolean; // Paper trading for testing
-  maxPositionSize?: number; // Dollar amount per position
-  maxRiskPerTrade?: number; // Max loss per trade (%)
+  paperTrading?: boolean;
+  maxPositionSize?: number;
+  maxRiskPerTrade?: number;
 }
 
 export interface BrokerAccount {
@@ -60,10 +62,63 @@ export interface TradeOrderLeg {
   filledQuantity?: number;
 }
 
+// ─── Alpaca REST client ────────────────────────────────────────────────────────
+
+class AlpacaClient {
+  private baseUrl: string;
+  private headers: Record<string, string>;
+
+  constructor(apiKey: string, apiSecret: string, paper: boolean) {
+    this.baseUrl = paper
+      ? 'https://paper-api.alpaca.markets'
+      : 'https://api.alpaca.markets';
+    this.headers = {
+      'APCA-API-KEY-ID': apiKey,
+      'APCA-API-SECRET-KEY': apiSecret,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  async get<T>(path: string): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, { headers: this.headers });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Alpaca API ${path} failed (${res.status}): ${text}`);
+    }
+    return res.json() as Promise<T>;
+  }
+
+  async post<T>(path: string, body: unknown): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Alpaca API ${path} failed (${res.status}): ${text}`);
+    }
+    return res.json() as Promise<T>;
+  }
+
+  async delete(path: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      method: 'DELETE',
+      headers: this.headers,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Alpaca API DELETE ${path} failed (${res.status}): ${text}`);
+    }
+  }
+}
+
+// ─── BrokerService ─────────────────────────────────────────────────────────────
+
 export class BrokerService {
   private static instance: BrokerService;
   private config: BrokerConfig | null = null;
-  private client: any = null;
+  private alpaca: AlpacaClient | null = null;
 
   private constructor() {}
 
@@ -74,153 +129,175 @@ export class BrokerService {
     return BrokerService.instance;
   }
 
-  /**
-   * Initialize broker connection
-   */
   async initialize(config: BrokerConfig): Promise<boolean> {
     this.config = config;
 
     switch (config.provider) {
       case 'alpaca':
-        return await this.initializeAlpaca(config);
-      case 'td_ameritrade':
-        return await this.initializeTDameritrade(config);
-      case 'interactive_brokers':
-        return await this.initializeIB(config);
+        return this.initializeAlpaca(config);
       case 'paper':
-        return await this.initializePaperTrading(config);
+        return this.initializePaperTrading();
       default:
-        console.error('Unknown broker provider:', config.provider);
+        console.error('Broker provider not yet supported:', config.provider);
         return false;
     }
   }
 
-  private async initializeAlpaca(config: BrokerConfig): Promise<boolean> {
-    try {
-      // alpaca-trade-api package
-      const Alpaca = (await import('@alpacahq/ts-sdk')).default;
-      this.client = new Alpaca({
-        credentials: {
-          key: config.apiKey,
-          secret: config.apiSecret,
-          paper: config.paperTrading !== false, // Default to paper
-        },
-      });
-      console.log('Connected to Alpaca broker');
-      return true;
-    } catch (error) {
-      console.error('Failed to initialize Alpaca:', error);
+  private initializeAlpaca(config: BrokerConfig): boolean {
+    if (!config.apiKey || !config.apiSecret) {
+      console.error('Alpaca: BROKER_API_KEY and BROKER_API_SECRET are required');
       return false;
     }
+    this.alpaca = new AlpacaClient(
+      config.apiKey,
+      config.apiSecret,
+      config.paperTrading !== false, // default to paper
+    );
+    console.log(`Alpaca connected (${config.paperTrading !== false ? 'paper' : 'live'})`);
+    return true;
   }
 
-  private async initializeTDameritrade(config: BrokerConfig): Promise<boolean> {
-    try {
-      // Would use TD Ameritrade API
-      console.log('TD Ameritrade integration coming soon');
-      return false;
-    } catch (error) {
-      console.error('Failed to initialize TD Ameritrade:', error);
-      return false;
-    }
-  }
-
-  private async initializeIB(config: BrokerConfig): Promise<boolean> {
-    try {
-      // Would use Interactive Brokers API
-      console.log('Interactive Brokers integration coming soon');
-      return false;
-    } catch (error) {
-      console.error('Failed to initialize IB:', error);
-      return false;
-    }
-  }
-
-  private async initializePaperTrading(config: BrokerConfig): Promise<boolean> {
-    // Paper trading simulator for testing
-    this.client = {
-      paperTrading: true,
-      balance: 25000,
-    };
+  private initializePaperTrading(): boolean {
+    this.alpaca = null;
     console.log('Paper trading initialized with $25,000');
     return true;
   }
 
-  /**
-   * Execute a signal as a trade
-   */
+  // ─── Account ──────────────────────────────────────────────────────────────
+
+  async getAccount(): Promise<BrokerAccount | null> {
+    if (this.config?.provider === 'paper') {
+      return {
+        id: 'paper_account',
+        provider: 'paper',
+        accountNumber: 'PAPER000001',
+        balance: 25000,
+        buyingPower: 100000,
+        positions: [],
+        equity: 25000,
+      };
+    }
+
+    if (!this.alpaca) return null;
+
+    try {
+      const raw = await this.alpaca.get<{
+        id: string;
+        account_number: string;
+        cash: string;
+        buying_power: string;
+        equity: string;
+      }>('/v2/account');
+
+      const positions = await this.getPositions();
+
+      return {
+        id: raw.id,
+        provider: 'alpaca',
+        accountNumber: raw.account_number,
+        balance: parseFloat(raw.cash),
+        buyingPower: parseFloat(raw.buying_power),
+        equity: parseFloat(raw.equity),
+        positions,
+      };
+    } catch (error) {
+      console.error('Failed to get Alpaca account:', error);
+      return null;
+    }
+  }
+
+  // ─── Positions ────────────────────────────────────────────────────────────
+
+  async getPositions(): Promise<Position[]> {
+    if (this.config?.provider === 'paper' || !this.alpaca) return [];
+
+    try {
+      const raw = await this.alpaca.get<
+        {
+          symbol: string;
+          qty: string;
+          avg_entry_price: string;
+          current_price: string;
+          unrealized_pl: string;
+          unrealized_plpc: string;
+        }[]
+      >('/v2/positions');
+
+      return raw.map((p) => ({
+        ticker: p.symbol,
+        quantity: parseFloat(p.qty),
+        avgFillPrice: parseFloat(p.avg_entry_price),
+        currentPrice: parseFloat(p.current_price),
+        unrealizedPnL: parseFloat(p.unrealized_pl),
+        unrealizedPnLPercent: parseFloat(p.unrealized_plpc) * 100,
+      }));
+    } catch (error) {
+      console.error('Failed to get Alpaca positions:', error);
+      return [];
+    }
+  }
+
+  // ─── Close position ───────────────────────────────────────────────────────
+
+  async closePosition(symbol: string): Promise<boolean> {
+    if (this.config?.provider === 'paper') return true;
+    if (!this.alpaca) return false;
+
+    try {
+      await this.alpaca.delete(`/v2/positions/${symbol}`);
+      return true;
+    } catch (error) {
+      console.error('Failed to close Alpaca position:', error);
+      return false;
+    }
+  }
+
+  // ─── Execute signal ───────────────────────────────────────────────────────
+
   async executeSignal(signal: Signal): Promise<TradeOrder | null> {
-    if (!this.config || !this.client) {
+    if (!this.config) {
       console.error('Broker not initialized');
       return null;
     }
 
-    // Validate position sizing and risk
     const orderDetails = await this.prepareOrder(signal);
-    if (!orderDetails) {
-      console.error('Failed to prepare order for signal:', signal.id);
-      return null;
-    }
+    if (!orderDetails) return null;
 
-    try {
-      const order = await this.submitOrder(signal, orderDetails);
-      return order;
-    } catch (error) {
-      console.error('Failed to execute signal:', error);
-      return null;
-    }
+    return this.submitOrder(signal, orderDetails);
   }
 
-  /**
-   * Prepare order with risk management checks
-   */
   private async prepareOrder(
-    signal: Signal
+    signal: Signal,
   ): Promise<{ quantity: number; limitPrices: number[] } | null> {
     const account = await this.getAccount();
     if (!account) return null;
 
-    // Calculate position size based on risk management rules
-    const maxRiskPerTrade = this.config?.maxRiskPerTrade || 1; // 1% of account
-    const maxPositionSize = this.config?.maxPositionSize || account.buyingPower * 0.2;
+    const maxPositionSize = this.config?.maxPositionSize ?? account.buyingPower * 0.2;
+    const estimatedCost = signal.netDebit * 100;
 
-    // For options: estimate cost of trade
-    const estimatedCost = signal.netDebit * 100; // Options are per contract, 100 shares
-
-    // Position sizing
-    let quantity = 1; // 1 contract
+    let quantity = 1;
     if (estimatedCost > maxPositionSize) {
-      console.warn(`Position size ${estimatedCost} exceeds max allowed ${maxPositionSize}`);
-      quantity = Math.floor(maxPositionSize / (signal.netDebit * 100));
+      quantity = Math.floor(maxPositionSize / estimatedCost);
     }
 
     if (quantity < 1) {
-      console.error('Position size too small for risk management rules');
+      console.error('Position size too small for risk rules');
       return null;
     }
 
-    return {
-      quantity,
-      limitPrices: signal.breakevens,
-    };
+    return { quantity, limitPrices: signal.breakevens };
   }
 
-  /**
-   * Submit order to broker
-   */
   private async submitOrder(
     signal: Signal,
-    orderDetails: { quantity: number; limitPrices: number[] }
+    orderDetails: { quantity: number; limitPrices: number[] },
   ): Promise<TradeOrder | null> {
     const tradeOrder: TradeOrder = {
       id: `trade_${Date.now()}`,
       signalId: signal.id,
       ticker: signal.ticker,
       strategy: signal.strategy,
-      legs: signal.legs.map((leg) => ({
-        ...leg,
-        quantity: orderDetails.quantity,
-      })),
+      legs: signal.legs.map((leg) => ({ ...leg, quantity: orderDetails.quantity })),
       status: 'pending',
       totalCost: signal.netDebit * 100 * orderDetails.quantity,
       expectedReturn: signal.maxGain * 100 * orderDetails.quantity,
@@ -229,16 +306,23 @@ export class BrokerService {
     };
 
     try {
-      if (this.config?.provider === 'paper') {
-        // Simulate order execution
-        await new Promise((resolve) => setTimeout(resolve, 500));
+      if (this.config?.provider === 'paper' || !this.alpaca) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
         tradeOrder.status = 'filled';
         tradeOrder.filledAt = new Date();
         console.log('Paper trade executed:', tradeOrder.id);
-      } else if (this.client) {
-        // Submit to real broker
-        // Implementation depends on broker API
-        console.log('Submitting order to', this.config?.provider);
+      } else {
+        // Alpaca equity order for the underlying (options orders require Alpaca Options access)
+        await this.alpaca.post('/v2/orders', {
+          symbol: signal.ticker,
+          qty: orderDetails.quantity,
+          side: 'buy',
+          type: 'limit',
+          time_in_force: 'day',
+          limit_price: signal.netDebit.toFixed(2),
+        });
+        tradeOrder.status = 'pending';
+        console.log('Alpaca order submitted for', signal.ticker);
       }
 
       return tradeOrder;
@@ -249,94 +333,20 @@ export class BrokerService {
     }
   }
 
-  /**
-   * Get account information
-   */
-  async getAccount(): Promise<BrokerAccount | null> {
-    if (!this.client) {
-      return null;
-    }
+  // ─── Stop loss / Take profit ──────────────────────────────────────────────
+
+  async setStopLoss(symbol: string, stopPrice: number): Promise<boolean> {
+    if (this.config?.provider === 'paper' || !this.alpaca) return true;
 
     try {
-      if (this.config?.provider === 'paper') {
-        // Mock account for paper trading
-        return {
-          id: 'paper_account',
-          provider: 'paper',
-          accountNumber: 'PAPER000001',
-          balance: 25000,
-          buyingPower: 100000,
-          positions: [],
-          equity: 25000,
-        };
-      } else if (this.client.getAccount) {
-        const account = await this.client.getAccount();
-        return {
-          id: account.id,
-          provider: this.config!.provider,
-          accountNumber: account.account_number,
-          balance: parseFloat(account.cash),
-          buyingPower: parseFloat(account.buying_power),
-          positions: account.positions || [],
-          equity: parseFloat(account.equity),
-        };
-      }
-    } catch (error) {
-      console.error('Failed to get account info:', error);
-    }
-
-    return null;
-  }
-
-  /**
-   * Close a position
-   */
-  async closePosition(orderId: string): Promise<boolean> {
-    if (!this.client) {
-      return false;
-    }
-
-    try {
-      // Implementation depends on broker
-      console.log('Closing position:', orderId);
-      return true;
-    } catch (error) {
-      console.error('Failed to close position:', error);
-      return false;
-    }
-  }
-
-  /**
-   * Get open positions
-   */
-  async getPositions(): Promise<Position[]> {
-    if (!this.client) {
-      return [];
-    }
-
-    try {
-      if (this.config?.provider === 'paper') {
-        return [];
-      }
-      // Get positions from broker
-      return [];
-    } catch (error) {
-      console.error('Failed to get positions:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Set stop loss for position
-   */
-  async setStopLoss(orderId: string, exitPrice: number): Promise<boolean> {
-    if (!this.client) {
-      return false;
-    }
-
-    try {
-      console.log(`Setting stop loss at ${exitPrice} for order ${orderId}`);
-      // Create stop order in broker
+      await this.alpaca.post('/v2/orders', {
+        symbol,
+        qty: 1,
+        side: 'sell',
+        type: 'stop',
+        time_in_force: 'gtc',
+        stop_price: stopPrice.toFixed(2),
+      });
       return true;
     } catch (error) {
       console.error('Failed to set stop loss:', error);
@@ -344,17 +354,18 @@ export class BrokerService {
     }
   }
 
-  /**
-   * Set take profit for position
-   */
-  async setTakeProfit(orderId: string, exitPrice: number): Promise<boolean> {
-    if (!this.client) {
-      return false;
-    }
+  async setTakeProfit(symbol: string, limitPrice: number): Promise<boolean> {
+    if (this.config?.provider === 'paper' || !this.alpaca) return true;
 
     try {
-      console.log(`Setting take profit at ${exitPrice} for order ${orderId}`);
-      // Create limit order in broker
+      await this.alpaca.post('/v2/orders', {
+        symbol,
+        qty: 1,
+        side: 'sell',
+        type: 'limit',
+        time_in_force: 'gtc',
+        limit_price: limitPrice.toFixed(2),
+      });
       return true;
     } catch (error) {
       console.error('Failed to set take profit:', error);

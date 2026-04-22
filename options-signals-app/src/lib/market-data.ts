@@ -298,15 +298,97 @@ export class MockYahooFinanceService {
   }
 }
 
-// Try to use real Yahoo Finance, fall back to mock if not available
-let yahooFinanceService: YahooFinanceService | MockYahooFinanceService;
+// ─── Finnhub Data Service ───────────────────────────────────────────────────
+// Free tier: 60 calls/min, real-time US quotes, no account restrictions.
+// Sign up at https://finnhub.io → Dashboard → API Keys
 
-// Check if yahoo-finance2 is available BEFORE trying to use it
-if (yahooFinance) {
-  console.log('Using Yahoo Finance service for real-time data');
+export class FinnhubDataService {
+  private static instance: FinnhubDataService;
+  private cache: Map<string, { data: MarketData; timestamp: number }> = new Map();
+  private readonly CACHE_DURATION = 15 * 1000; // 15 seconds
+  private readonly BASE_URL = 'https://finnhub.io/api/v1';
+
+  private constructor(private readonly apiKey: string) {}
+
+  static getInstance(apiKey: string): FinnhubDataService {
+    if (!FinnhubDataService.instance) {
+      FinnhubDataService.instance = new FinnhubDataService(apiKey);
+    }
+    return FinnhubDataService.instance;
+  }
+
+  async getQuote(ticker: string): Promise<MarketData> {
+    const cached = this.cache.get(ticker);
+    if (cached && Date.now() - cached.timestamp < this.CACHE_DURATION) {
+      return cached.data;
+    }
+
+    const res = await fetch(
+      `${this.BASE_URL}/quote?symbol=${ticker}&token=${this.apiKey}`,
+    );
+
+    if (!res.ok) {
+      throw new Error(`Finnhub error for ${ticker}: ${res.status}`);
+    }
+
+    // c = current price, pc = previous close
+    const json = await res.json() as { c: number; pc: number };
+    if (!json.c) throw new Error(`No Finnhub data for ${ticker}`);
+
+    const data: MarketData = { ticker, price: json.c };
+    this.cache.set(ticker, { data, timestamp: Date.now() });
+    return data;
+  }
+
+  async getQuotes(tickers: string[]): Promise<MarketData[]> {
+    // Finnhub free tier: serial calls with small delay to stay under 60 req/min
+    const results: MarketData[] = [];
+    for (const ticker of tickers) {
+      try {
+        results.push(await this.getQuote(ticker));
+        await new Promise((r) => setTimeout(r, 100)); // ~10 req/sec
+      } catch (err) {
+        console.error(`Finnhub: failed to fetch ${ticker}:`, err);
+      }
+    }
+    return results;
+  }
+
+  async refreshQuote(ticker: string): Promise<MarketData> {
+    this.cache.delete(ticker);
+    return this.getQuote(ticker);
+  }
+
+  clearCache(): void {
+    this.cache.clear();
+  }
+
+  async getOptionsChain(ticker: string, _expirationDate?: Date) {
+    // Finnhub options chain (requires paid plan)
+    const res = await fetch(
+      `${this.BASE_URL}/stock/option-chain?symbol=${ticker}&token=${this.apiKey}`,
+    );
+    if (!res.ok) throw new Error(`Finnhub options chain failed for ${ticker}: ${res.status}`);
+    return res.json();
+  }
+}
+
+// ─── Service selection ──────────────────────────────────────────────────────
+// Priority: Finnhub (when key present) → Yahoo Finance → Mock
+
+const finnhubKey = process.env.FINNHUB_API_KEY;
+
+type AnyMarketService = FinnhubDataService | YahooFinanceService | MockYahooFinanceService;
+let yahooFinanceService: AnyMarketService;
+
+if (finnhubKey) {
+  console.log('Using Finnhub for real-time market data');
+  yahooFinanceService = FinnhubDataService.getInstance(finnhubKey);
+} else if (yahooFinance) {
+  console.log('Using Yahoo Finance for real-time data');
   yahooFinanceService = YahooFinanceService.getInstance();
 } else {
-  console.log('Yahoo Finance not available, using mock data service with realistic price movements');
+  console.log('No market data provider configured — using mock data');
   yahooFinanceService = MockYahooFinanceService.getInstance();
 }
 
