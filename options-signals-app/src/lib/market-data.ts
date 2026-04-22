@@ -170,18 +170,18 @@ export class MockYahooFinanceService {
   private priceHistory: Map<string, number[]> = new Map(); // Track price history for realistic movements
   private readonly CACHE_DURATION = 30 * 1000; // 30 seconds - match real service
   private readonly BASE_PRICES: Record<string, number> = {
-    'NVDA': 118.42,
-    'SPY': 549.3,
-    'QQQ': 478.15,
-    'TSLA': 232.8,
-    'AAPL': 162.4,
-    'MSFT': 412.05,
-    'AMD': 148.6,
-    'META': 485.2,
-    'GOOGL': 172.85,
-    'AMZN': 178.92,
-    'IWM': 204.5,
-    'COIN': 198.4,
+    'NVDA': 131.0,
+    'SPY': 578.0,
+    'QQQ': 498.0,
+    'TSLA': 248.0,
+    'AAPL': 207.0,
+    'MSFT': 415.0,
+    'AMD': 128.0,
+    'META': 545.0,
+    'GOOGL': 183.0,
+    'AMZN': 205.0,
+    'IWM': 218.0,
+    'COIN': 232.0,
   };
 
   private constructor() {}

@@ -51,10 +51,14 @@ async function getUniverse(forceRefresh = false): Promise<Array<MarketData & { i
     }));
   } catch (error) {
     console.error("Failed to fetch market data, falling back to mock data:", error);
-    // Fallback to mock data if Yahoo Finance fails
-    return TICKERS.map((ticker, index) => ({
+    const fallbackPrices: Record<string, number> = {
+      NVDA: 131.0, SPY: 578.0, QQQ: 498.0, TSLA: 248.0,
+      AAPL: 207.0, MSFT: 415.0, AMD: 128.0, META: 545.0,
+      GOOGL: 183.0, AMZN: 205.0, IWM: 218.0, COIN: 232.0,
+    };
+    return TICKERS.map((ticker) => ({
       ticker,
-      price: 100 + Math.random() * 400, // Mock prices
+      price: fallbackPrices[ticker] ?? 150,
       ivRank: 20 + Math.floor(Math.random() * 60),
     }));
   }
