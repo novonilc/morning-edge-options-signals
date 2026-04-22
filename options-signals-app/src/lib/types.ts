@@ -28,17 +28,22 @@ export type Signal = {
   id: string;
   generatedAt: string;
   ticker: string;
+  symbol?: string; // Alias for ticker for compatibility
   underlyingPrice: number;
   category: Category;
   strategy: Strategy;
   horizon: Horizon;
   conviction: Conviction;
   convictionScore: number;
+  confidence?: number; // Alias for convictionScore
+  type?: "BULLISH" | "BEARISH"; // Directional bias
   legs: Leg[];
   netDebit: number;
   netCredit: number;
   maxGain: number;
   maxLoss: number;
+  maxProfit?: number; // Alias for maxGain
+  maxReward?: number; // Alias for maxGain
   breakevens: number[];
   probabilityOfProfit: number;
   thesis: string;

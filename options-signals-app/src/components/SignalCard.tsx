@@ -24,7 +24,7 @@ const CONVICTION_CLASS: Record<string, string> = {
   low: "text-[color:var(--ink-400)]",
 };
 
-export function SignalCard({ signal, rank }: { signal: Signal; rank: number }) {
+export function SignalCard({ signal, rank, onExecute }: { signal: Signal; rank: number; onExecute?: (signal: Signal) => void }) {
   const [expanded, setExpanded] = useState(false);
   const [papered, setPapered] = useState(false);
 
@@ -154,17 +154,27 @@ export function SignalCard({ signal, rank }: { signal: Signal; rank: number }) {
         >
           {expanded ? "Collapse ←" : "Expand →"}
         </button>
-        <button
-          onClick={() => setPapered(true)}
-          disabled={papered}
-          className={`font-mono text-[11px] uppercase tracking-wider ${
-            papered
-              ? "text-[color:var(--bull)]"
-              : "text-[color:var(--ink-600)] hover:text-[color:var(--accent)]"
-          }`}
-        >
-          {papered ? "✓ Papered" : "Paper trade →"}
-        </button>
+        <div className="flex gap-2">
+          {onExecute && (
+            <button
+              onClick={() => onExecute(signal)}
+              className="font-mono text-[11px] uppercase tracking-wider px-3 py-1 rounded bg-green-600 text-white hover:bg-green-700"
+            >
+              Live Trade →
+            </button>
+          )}
+          <button
+            onClick={() => setPapered(true)}
+            disabled={papered}
+            className={`font-mono text-[11px] uppercase tracking-wider ${
+              papered
+                ? "text-[color:var(--bull)]"
+                : "text-[color:var(--ink-600)] hover:text-[color:var(--accent)]"
+            }`}
+          >
+            {papered ? "✓ Papered" : "Paper trade →"}
+          </button>
+        </div>
       </div>
     </article>
   );

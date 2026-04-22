@@ -370,17 +370,22 @@ export async function generateSignals(date: Date = new Date(), forceRefresh = fa
       id: `sig_${dateSeed(date)}_${i}`,
       generatedAt: new Date(date.getTime()).toISOString(),
       ticker: underlying.ticker,
+      symbol: underlying.ticker, // Add symbol alias for compatibility
       underlyingPrice: underlying.price,
       category,
       strategy,
       horizon,
       conviction,
       convictionScore,
+      confidence: convictionScore, // Add confidence alias
+      type: strategy.includes("bull") || strategy.includes("call_spread") ? "BULLISH" : "BEARISH", // Add directional type
       legs,
       netDebit: debit,
       netCredit: credit,
       maxGain,
       maxLoss,
+      maxProfit: maxGain, // Add maxProfit alias
+      maxReward: maxGain, // Add maxReward alias
       breakevens,
       probabilityOfProfit: pop,
       thesis: pick(THESES[strategy], rnd),
@@ -390,7 +395,7 @@ export async function generateSignals(date: Date = new Date(), forceRefresh = fa
       status: "active",
       closedAt: null,
       realizedPnl: null,
-    });
+    } as Signal);
   }
 
   picks.sort((a, b) => b.convictionScore - a.convictionScore);
